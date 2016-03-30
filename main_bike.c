@@ -6,56 +6,48 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "build.h"
+#include "build_bike.h"
 
 using namespace std;
 
-char RGB_result[8+1]; // for some reason, adding 1 works
+#define INT_PIN (4) //GPIO interrupt is detected on PIN 4
+#define INT_PIN_ASLP (17)// Sleep interrupt is on PIN17  
+// for some reason, adding 1 works
 char MMA_result[6+1];
-char RGB_check[1+1];
 char MMA_check[1+1];
+char MMA_int_src[1+1]; //interrupt source for MMA
 
 int err; //error code
+int ISR_OFF = 0;
+bool MMA_start_flag = 0; //MMA start collection flag
+bool MMA_stop_flag = 0;//MMA flag for stoping 
 
-float color[4];//actual color reading
 uint16_t accel[3];//actual accelerometer reading before normalization
 float accel_g[3]; //accelerometer reading after normalization
 //function prototype
 float MMA_g_out(uint16_t accel_reading);
+void MMA_ISR(int gpio, int level, uint32_t tick);
+void ASLP_ISR(int gpio, int level, uint32_t tick);
 
-char RGB_init_buf[] = {4, RGB_ADDR,  // set up Chip address
-                       2, 7, 2, (RGB_COMMAND_BIT | TCS34725_ATIME), 0xFF, 3,   // Integration of Sensor. 0 - slowest , 0xFF -fastest
-                       2, 7, 2, (RGB_COMMAND_BIT | TCS34725_CONFIG), 0x00, 3, // 
-                       2, 7, 2, (RGB_COMMAND_BIT | TCS34725_CONTROL), 0x01, 3, // 
-		                   2, 7, 2, (RGB_COMMAND_BIT | TCS34725_ENABLE), TCS34725_ENABLE_PON,3,	//power on
-                       0 // EOL
-                       };
-
-
-char RGB_enable_buf[] = {4, RGB_ADDR,  // set up Chip address
-                       2, 7, 2, (RGB_COMMAND_BIT | TCS34725_ENABLE), (TCS34725_ENABLE_PON | TCS34725_ENABLE_AEN), 3,   // 
-                       0 // EOL
-                       };
-
-char RGB_check_buf[] = {4, RGB_ADDR,  // set up Chip address
-                       2, 7, 1, (RGB_COMMAND_BIT | TCS34725_ID),2,6,1, 3, 
-                       0 // EOL
-                       };
-                       
-char RGB_read_buf[] = {4, RGB_ADDR,  // set up Chip address
-                       2, 7, 1, (RGB_COMMAND_BIT | CLEAR_L),2,6,8, 3, 
-                       0 // EOL
-                       };
-                       
 char MMA_init_buf[] = {4, MMA8451_ADDR,  // set up Chip address
-                       2, 7, 2, MMA8451_CTRL_REG1, 0x18, 3,    // put MMA in standby
-                       //2, 7, 2, MMA8451_FF_MT_CFG, 0xF8, 3,    // configure interrupt to detect freefall in XYZ direction, event flag latch enabled - read FF_MT_SRC to clear flag
-                       //2, 7, 2, 
-                       2, 7, 2, MMA8451_XYZ_DATA_CFG, 0x02, 3, // Configure XYZ +/- 8g (full-scale  = 8g)
-		                   2, 7, 2, MMA8451_CTRL_REG1, 0x21,3,	//initialize MMA
+                       2, 7, 2, MMA8451_CTRL_REG1,    0x18, 3,    // put MMA in standby
+                       2, 7, 2, MMA8451_CTRL_REG2,    0x04, 3,    // enable sleep mode (SLPE)
+                       2, 7, 2, MMA8451_CTRL_REG1,    0xC0, 3,    // ASLP_rate = 1.56zm, AWKE_rate = 800Hz, no LNOISE, no_FREAD, standby
+                       2, 7, 2, MMA8451_CTRL_REG4,    0x84, 3,    // Sleep/Wake + Motion interrupt enabled, non other interrupts enabled
+                       2, 7, 2, MMA8451_CTRL_REG5,    0x80, 3,    // Route Pulse, Motion1 and Orientation to INT2 and Auto-Sleep to INT1.
+                       2, 7, 2, MMA8451_CTRL_REG3,    0x08, 3,    // only Motion can wake device .
+                       2, 7, 2, MMA8451_FF_MT_CFG,    0x78, 3,    //configure interrupt to detect freefall in XYZ direction, event flag latch disabled
+                       2, 7, 2, MMA8451_FF_MT_THS,    0x1F, 3,    // detect 2 g acceleration in XYZ directions
+                       2, 7, 2, MMA8451_FF_MT_COUNT,  0x18, 3,    // debounce ctr 30ms/1.25ms(@800Hz) = 24counts = 0x18
+                       2, 7, 2, MMA8451_ASLP_COUNT,   0x1E, 3,    // enter sleep mode after 6 seconds inactivity
+                       2, 7, 2, MMA8451_XYZ_DATA_CFG, 0x02, 3,    // Configure XYZ +/- 8g (full-scale  = 8g)
+		                   2, 7, 2, MMA8451_CTRL_REG1,    0xC1, 3,	  //initialize MMA
                        0 // EOL
                        };
-
+char MMA_read_int_buf[] = {4, MMA8451_ADDR,  // set up Chip address
+                       2, 7, 1, MMA8451_FF_MT_SRC, 2, 6, 1, 3,  //read FF_MT_SRC register to clear event flag
+                       0 // EOL
+                       };
 char MMA_read_buf[] = {4, MMA8451_ADDR,  // set up Chip address
                        2, 7, 1, MMA8451_OUT_X_MSB, 2, 6, 6, 3,  //read 6 bytes following MMA8451_OUT_X_MSB
                        0 // EOL
@@ -83,42 +75,6 @@ if (bbI2COpen(2,3,100000) != 0){ //start Bitbanging on with SDA = pin2, SCL = pi
 	return -1;
 }
 
-/*** Initialize RGB ***/
-/*
-err = bbI2CZip(2,RGB_init_buf,sizeof(RGB_init_buf),NULL,0);
-while (err != 0){
-	err = bbI2CZip(2,RGB_init_buf,sizeof(RGB_init_buf),NULL,0);
-	printf ("RGB init error = %d\n", err);
-}
-printf ("RGB init pass\n");
-
-for (int i=0; i<1000;i++){};
-
-err = bbI2CZip(2,RGB_enable_buf,sizeof(RGB_enable_buf),NULL,0);
-while (err != 0){
-	err = bbI2CZip(2,RGB_enable_buf,sizeof(RGB_enable_buf),NULL,0);
-	printf ("RGB enable error = %d\n", err);
-}
-printf ("RGB enable pass\n");
-
-
-err = bbI2CZip(2,RGB_check_buf,sizeof(RGB_check_buf),RGB_check,sizeof(RGB_check) );
-while (err != 1){
-	err = bbI2CZip(2,RGB_check_buf,sizeof(RGB_check_buf),RGB_check,sizeof(RGB_check) );
-	printf("RGB check ID error = %d\n", err);
-}
-
-
-if(RGB_check[0] == 0x44){
-	printf("RGB Sensor Connected, ID = %d\n", RGB_check[0]);
-}else{
-	printf("ERROR! RGB Sensor not found\n");
-	while(bbI2CClose(2)!=0);
-	gpioTerminate();
-	return -1;
-}
-*/
-
 /*** Initialize MMA ***/
 
 err = bbI2CZip(2,MMA_init_buf,sizeof(MMA_init_buf),NULL,0);
@@ -144,54 +100,60 @@ if(MMA_check[0] == MMA8451_WHO_AM_I_VALUE){
 	return -1;
 }
 
+gpioSetISRFunc(INT_PIN, EITHER_EDGE,-1,MMA_ISR); //enable GPIO interrupt on Pin 4
 
-
-for(;;){
-	/*
-	//Clear, Red, BLue, Green
-	err = bbI2CZip(2, RGB_read_buf,sizeof(RGB_read_buf),RGB_result,sizeof(RGB_result));
-
-	//Color_RGB
-	color[0]= ((RGB_result[1]<<8) + RGB_result[0]); //last two bits are empty
-	color[1]= ((RGB_result[3]<<8) + RGB_result[2]);
-	color[2]= ((RGB_result[5]<<8) + RGB_result[4]);
-	color[3]= ((RGB_result[7]<<8) + RGB_result[6]);
-
-  if (err == 8){
-	printf("CLEAR = %.2f  " ,color[0]);
-	printf("RED = %.2f  "   ,color[1]);
-	printf("BLUE = %.2f  "  ,color[2]);
-	printf("GREEN = %.2f \n\n" ,color[3]);
- }else{
- 	printf("RGB read error. error = %d \n", err);
- }
-
-*/
-	//X_MSB,X_LSB,Y_MSB,Y_LSB,Z_MSB,Z_LSB
-	err = bbI2CZip(2, MMA_read_buf,sizeof(MMA_read_buf),MMA_result,sizeof(MMA_result));
+while (!MMA_stop_flag){
+	if (MMA_start_flag){
+		ISR_OFF++;
+		if(ISR_OFF ==1) {
+			if((err = gpioSetISRFunc(INT_PIN, RISING_EDGE,0,NULL))!=0){
+				printf("interrupt termination error = %d", err);
+			}
+       gpioSetISRFunc(INT_PIN_ASLP, EITHER_EDGE,-1,ASLP_ISR); //enable GPIO interrupt on Pin 4
+		}
+		//X_MSB,X_LSB,Y_MSB,Y_LSB,Z_MSB,Z_LSB
+		err = bbI2CZip(2, MMA_read_buf,sizeof(MMA_read_buf),MMA_result,sizeof(MMA_result));
 	
-  //Accel XYZ
-	accel[0]= ((MMA_result[0]<<8) + MMA_result[1])&0xFFFC;
-	accel[1]= ((MMA_result[2]<<8) + MMA_result[3])&0xFFFC;
-	accel[2]= ((MMA_result[4]<<8) + MMA_result[5])&0xFFFC;
- 	accel_g[0] = MMA_g_out(accel[0]);
- 	accel_g[1] = MMA_g_out(accel[1]);
- 	accel_g[2] = MMA_g_out(accel[2]);
-  if (err == 6){
-	printf("X = %.4f  "   ,accel_g[0]);
-	printf("Y = %.4f  "   ,accel_g[1]);
-	printf("Z = %.4f  \n" ,accel_g[2]);
-  }
-  else{
-  printf("MMA read error. error = %d \n", err);
-  }
-	
+  		//Accel XYZ
+		accel[0]= ((MMA_result[0]<<8) + MMA_result[1])&0xFFFC;
+		accel[1]= ((MMA_result[2]<<8) + MMA_result[3])&0xFFFC;
+		accel[2]= ((MMA_result[4]<<8) + MMA_result[5])&0xFFFC;
+ 		accel_g[0] = MMA_g_out(accel[0]);
+ 		accel_g[1] = MMA_g_out(accel[1]);
+ 		accel_g[2] = MMA_g_out(accel[2]);
+  		if (err == 6){
+			printf("X = %.4f  "   ,accel_g[0]);
+			printf("Y = %.4f  "   ,accel_g[1]);
+			printf("Z = %.4f  \n" ,accel_g[2]);
+  		}
+  		else{
+  			printf("MMA read error. error = %d \n", err);
+  		}
+	}
 }
+  printf("collection finished!\n");
   bbI2CClose(2);
 
   gpioTerminate();
 }
 
+void MMA_ISR(int gpio, int level, uint32_t tick){
+  printf("Interrupt Source = %d", MMA_int_src[0]);
+
+  printf ("MMA_ISR - gpio: %d, level: %d\n", gpio, level);
+  printf("hello world\n");
+  MMA_start_flag = 1;
+
+}
+
+void ASLP_ISR(int gpio, int level, uint32_t tick){
+  if(MMA_start_flag){//it has already started recording, now we can stop
+      MMA_stop_flag = 1;
+  } 
+  else{
+  // do nothing
+  }
+}
 
 float MMA_g_out(uint16_t accel_reading){
 	int accel_g_hi = 0;
