@@ -11,7 +11,10 @@
 using namespace std;
 
 #define INT_PIN (4) //GPIO interrupt is detected on PIN 4
+<<<<<<< HEAD
 #define INT_PIN_ASLP (17)// Sleep interrupt is on PIN17  
+=======
+>>>>>>> origin/master
 // for some reason, adding 1 works
 char MMA_result[6+1];
 char MMA_check[1+1];
@@ -20,13 +23,18 @@ char MMA_int_src[1+1]; //interrupt source for MMA
 int err; //error code
 int ISR_OFF = 0;
 bool MMA_start_flag = 0; //MMA start collection flag
+<<<<<<< HEAD
 bool MMA_stop_flag = 0;//MMA flag for stoping 
+=======
+
+>>>>>>> origin/master
 
 uint16_t accel[3];//actual accelerometer reading before normalization
 float accel_g[3]; //accelerometer reading after normalization
 //function prototype
 float MMA_g_out(uint16_t accel_reading);
 void MMA_ISR(int gpio, int level, uint32_t tick);
+<<<<<<< HEAD
 void ASLP_ISR(int gpio, int level, uint32_t tick);
 
 char MMA_init_buf[] = {4, MMA8451_ADDR,  // set up Chip address
@@ -42,6 +50,22 @@ char MMA_init_buf[] = {4, MMA8451_ADDR,  // set up Chip address
                        2, 7, 2, MMA8451_ASLP_COUNT,   0x1E, 3,    // enter sleep mode after 6 seconds inactivity
                        2, 7, 2, MMA8451_XYZ_DATA_CFG, 0x02, 3,    // Configure XYZ +/- 8g (full-scale  = 8g)
 		                   2, 7, 2, MMA8451_CTRL_REG1,    0xC1, 3,	  //initialize MMA
+=======
+
+
+char MMA_init_buf[] = {4, MMA8451_ADDR,  // set up Chip address
+                       2, 7, 2, MMA8451_CTRL_REG1, 0x18, 3,    // put MMA in standby
+                       //2, 7, 2, MMA4851_CTRL_REG2, 0x04, 3,    // enable sleep mode (SLPE)
+                       2, 7, 2, MMA8451_CTRL_REG1, 0xC0, 3,    // ASLP_rate = 1.56zm, AWKE_rate = 800Hz, no LNOISE, no_FREAD, standby
+                       2, 7, 2, MMA8451_CTRL_REG4, 0x04, 3,    // Motion interrupt enabled, non other interrupts enabled
+                       2, 7, 2, MMA8451_CTRL_REG5, 0x80, 3,    // Route Pulse, Motion1 and Orientation to INT2 and Auto-Sleep to INT1.
+                       //2, 7, 2, MMA8451_CTRL_REG3, 0x08, 3,    // only Motion can wake device .
+                       2, 7, 2, MMA8451_FF_MT_CFG, 0xF8,3,       //configure interrupt to detect freefall in XYZ direction, event flag latch enabled - read FF_MT_SRC to clear flag
+                       2, 7, 2, MMA8451_FF_MT_THS, 0x1F,3,        // detect 2 g acceleration in XYZ directions
+                       2, 7, 7, MMA8451_FF_MT_COUNT, 0x18 ,3,    // debounce ctr 30ms/1.25ms(@800Hz) = 24counts = 0x18
+                       2, 7, 2, MMA8451_XYZ_DATA_CFG, 0x02, 3, // Configure XYZ +/- 8g (full-scale  = 8g)
+		                   2, 7, 2, MMA8451_CTRL_REG1, 0xC1,3,	//initialize MMA
+>>>>>>> origin/master
                        0 // EOL
                        };
 char MMA_read_int_buf[] = {4, MMA8451_ADDR,  // set up Chip address
@@ -102,15 +126,23 @@ if(MMA_check[0] == MMA8451_WHO_AM_I_VALUE){
 
 gpioSetISRFunc(INT_PIN, EITHER_EDGE,-1,MMA_ISR); //enable GPIO interrupt on Pin 4
 
+<<<<<<< HEAD
 while (!MMA_stop_flag){
+=======
+while (1){
+>>>>>>> origin/master
 	if (MMA_start_flag){
 		ISR_OFF++;
 		if(ISR_OFF ==1) {
 			if((err = gpioSetISRFunc(INT_PIN, RISING_EDGE,0,NULL))!=0){
 				printf("interrupt termination error = %d", err);
 			}
+<<<<<<< HEAD
        gpioSetISRFunc(INT_PIN_ASLP, EITHER_EDGE,-1,ASLP_ISR); //enable GPIO interrupt on Pin 4
 		}
+=======
+		}		
+>>>>>>> origin/master
 		//X_MSB,X_LSB,Y_MSB,Y_LSB,Z_MSB,Z_LSB
 		err = bbI2CZip(2, MMA_read_buf,sizeof(MMA_read_buf),MMA_result,sizeof(MMA_result));
 	
@@ -131,18 +163,27 @@ while (!MMA_stop_flag){
   		}
 	}
 }
+<<<<<<< HEAD
   printf("collection finished!\n");
+=======
+
+>>>>>>> origin/master
   bbI2CClose(2);
 
   gpioTerminate();
 }
 
 void MMA_ISR(int gpio, int level, uint32_t tick){
+<<<<<<< HEAD
+=======
+  bbI2CZip(2, MMA_read_int_buf,sizeof(MMA_read_int_buf),MMA_int_src,sizeof(MMA_int_src));
+>>>>>>> origin/master
   printf("Interrupt Source = %d", MMA_int_src[0]);
 
   printf ("MMA_ISR - gpio: %d, level: %d\n", gpio, level);
   printf("hello world\n");
   MMA_start_flag = 1;
+<<<<<<< HEAD
 
 }
 
@@ -154,6 +195,10 @@ void ASLP_ISR(int gpio, int level, uint32_t tick){
   // do nothing
   }
 }
+=======
+}
+
+>>>>>>> origin/master
 
 float MMA_g_out(uint16_t accel_reading){
 	int accel_g_hi = 0;
